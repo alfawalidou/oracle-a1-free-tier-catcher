@@ -1,81 +1,49 @@
-# Oracle Cloud A1 Free Tier Catcher
+# Oracle A1 Free Tier Catcher
 
-A small Bash utility that automatically retries the creation of an Oracle Cloud `VM.Standard.A1.Flex` instance until capacity becomes available.
+Automatically retries the creation of an Oracle Cloud `VM.Standard.A1.Flex` instance until capacity becomes available.
 
-It is designed for situations where the Oracle Cloud Console repeatedly returns an error similar to:
+This project is useful when the Oracle Cloud Console repeatedly returns:
 
 ```text
 Out of capacity for shape VM.Standard.A1.Flex
 ```
 
-Instead of manually clicking **Create** again and again, this script calls the OCI API periodically and stops as soon as an instance is successfully created.
+Instead of manually retrying from the web console, this script uses the OCI CLI to periodically attempt instance creation across multiple Availability Domains and configurations.
 
 ## Features
 
-* Automatic OCI capacity retries
-* Multiple Availability Domains
-* Tries `1 OCPU / 6 GB` first
-* Then tries `2 OCPU / 12 GB`
-* Automatic stop after successful creation
+* Automatic retry loop
+* Tries multiple Availability Domains
+* Tries `1 OCPU / 6 GB` first, then `2 OCPU / 12 GB`
+* Stops automatically after successful creation
 * Detects an already existing instance
-* Handles temporary network and OCI service errors
-* Timestamped logging
+* Handles temporary OCI/network errors
+* Timestamped logs
 * Optional Telegram notifications
-* Suitable for a local Linux machine or always-on Linux server
+* Linux/systemd support
+* Can also be used from Windows through WSL
 
-> This project is not affiliated with Oracle. Use it responsibly and respect Oracle Cloud limits and terms of service.
+> This project is not affiliated with Oracle.
 
 ---
 
-# How it works
-
-The catcher follows this sequence:
+# Repository structure
 
 ```text
-Check whether the instance already exists
-            |
-            v
-Try 1 OCPU / 6 GB in AD-1
-            |
-            v
-Try 1 OCPU / 6 GB in AD-2
-            |
-            v
-Try 2 OCPU / 12 GB in AD-1
-            |
-            v
-Try 2 OCPU / 12 GB in AD-2
-            |
-            v
-Wait
-            |
-            v
-Repeat
-```
-
-When OCI accepts one request:
-
-```text
-Instance created
-      |
-      v
-Wait for RUNNING
-      |
-      v
-Retrieve public IP
-      |
-      v
-Send Telegram notification
-      |
-      v
-Exit
+oracle-a1-free-tier-catcher/
+├── README.md
+├── .gitignore
+├── .env.example
+├── create-a1.sh
+└── systemd/
+    └── oracle-a1-catcher.service.example
 ```
 
 ---
 
 # 1. Oracle Cloud preparation
 
-Before using the script, prepare your Oracle Cloud account.
+Before running the script, you need to collect several values from Oracle Cloud.
 
 You will need:
 
@@ -89,31 +57,50 @@ You will need:
 * ARM-compatible image OCID
 * Availability Domain names
 
-## 1.1 Create an OCI API signing key
+## 1.1 Find your Tenancy OCID
 
-Open the Oracle Cloud Console.
+In the Oracle Cloud Console, open your tenancy details and copy the OCID.
+
+It starts with:
+
+```text
+ocid1.tenancy.oc1..
+```
+
+## 1.2 Find your User OCID
+
+Open:
+
+```text
+Profile
+→ My profile
+→ User information
+```
+
+Copy the value starting with:
+
+```text
+ocid1.user.oc1..
+```
+
+## 1.3 Create an API signing key
 
 Go to:
 
 ```text
 Profile
-→ My Profile / User Settings
-→ API Keys
-→ Add API Key
+→ My profile
+→ API keys
+→ Add API key
 ```
 
-You can either:
+You can either let Oracle generate the key pair or upload your own RSA public key.
 
-* let Oracle generate the API key pair, or
-* upload your own RSA public key.
+Keep the private key secure.
 
-OCI API signing keys are RSA PEM keys. Oracle requires at least 2048-bit RSA keys.
+Never commit the private key to GitHub.
 
-If Oracle generates the key, download the private key and store it securely.
-
-Never upload the private key to GitHub.
-
-Oracle will display a configuration preview similar to:
+After adding the key, Oracle displays a configuration preview similar to:
 
 ```ini
 [DEFAULT]
@@ -126,34 +113,98 @@ key_file=/path/to/private/key.pem
 
 Save these values.
 
-## 1.2 Find your Tenancy OCID
+---
 
-In the OCI Console, open the tenancy information page.
+# 2. Install OCI CLI
 
-Copy the value beginning with:
+## Linux / Debian / Ubuntu
 
-```text
-ocid1.tenancy.oc1..
+Install prerequisites:
+
+```bash
+sudo apt update
+sudo apt install -y curl python3 python3-venv unzip git
 ```
 
-## 1.3 Find your User OCID
+Install OCI CLI:
 
-Open:
-
-```text
-Profile
-→ User Settings
+```bash
+bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
 ```
 
-Copy the value beginning with:
+Reload your shell if needed:
 
-```text
-ocid1.user.oc1..
+```bash
+exec "$SHELL"
 ```
 
-## 1.4 Find the Availability Domains
+Check:
 
-After configuring the OCI CLI, run:
+```bash
+oci --version
+```
+
+## Windows
+
+The easiest method is WSL2.
+
+Install WSL:
+
+```powershell
+wsl --install
+```
+
+Then install Debian or Ubuntu and follow the Linux instructions above.
+
+Native Windows OCI CLI also works, but this Bash script is primarily designed for Linux.
+
+---
+
+# 3. Configure OCI authentication
+
+Create the OCI configuration directory:
+
+```bash
+mkdir -p ~/.oci
+```
+
+Create:
+
+```text
+~/.oci/config
+```
+
+Example:
+
+```ini
+[DEFAULT]
+user=YOUR_USER_OCID
+fingerprint=YOUR_FINGERPRINT
+key_file=/home/YOUR_USER/.oci/oci_api_key.pem
+tenancy=YOUR_TENANCY_OCID
+region=YOUR_REGION
+```
+
+Protect the files:
+
+```bash
+chmod 600 ~/.oci/config
+chmod 600 ~/.oci/oci_api_key.pem
+```
+
+Test authentication:
+
+```bash
+oci iam region-subscription list --output table
+```
+
+A successful result should list your subscribed region.
+
+---
+
+# 4. Find your Availability Domains
+
+Run:
 
 ```bash
 oci iam availability-domain list \
@@ -170,9 +221,11 @@ XXXX:UK-LONDON-1-AD-2
 XXXX:UK-LONDON-1-AD-3
 ```
 
-Only add Availability Domains that work with your selected resources.
+Only add the Availability Domains you want the script to try.
 
-## 1.5 Find your subnet OCID
+---
+
+# 5. Find your subnet OCID
 
 Run:
 
@@ -184,15 +237,17 @@ oci network subnet list \
   --output table
 ```
 
-Copy the OCID of the subnet you want to use.
+Choose the subnet you want to use.
 
-For a server requiring direct Internet access, this will usually be a public subnet.
+If the future VM needs direct Internet access, use a public subnet.
 
-## 1.6 Find an ARM-compatible image
+---
 
-Ampere A1 uses the ARM64/AArch64 architecture.
+# 6. Find an ARM-compatible image
 
-For Oracle Linux:
+Ampere A1 uses ARM64/AArch64.
+
+Example for Oracle Linux:
 
 ```bash
 oci compute image list \
@@ -210,80 +265,11 @@ Copy the returned image OCID.
 
 ---
 
-# 2. Linux installation
+# 7. Create the SSH key for the future VM
 
-The recommended platform is Debian or Ubuntu.
+This SSH key is different from the OCI API key.
 
-## 2.1 Install prerequisites
-
-```bash
-sudo apt update
-sudo apt install -y curl python3 python3-venv unzip git
-```
-
-## 2.2 Install OCI CLI
-
-Run:
-
-```bash
-bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
-```
-
-Reload your shell if required:
-
-```bash
-exec "$SHELL"
-```
-
-Verify:
-
-```bash
-oci --version
-```
-
-## 2.3 Configure OCI authentication
-
-Create:
-
-```text
-~/.oci/config
-```
-
-Example:
-
-```ini
-[DEFAULT]
-user=YOUR_USER_OCID
-fingerprint=YOUR_API_KEY_FINGERPRINT
-key_file=/home/YOUR_USER/.oci/oci_api_key.pem
-tenancy=YOUR_TENANCY_OCID
-region=YOUR_REGION
-```
-
-Protect the files:
-
-```bash
-chmod 600 ~/.oci/config
-chmod 600 ~/.oci/oci_api_key.pem
-```
-
-Test OCI authentication:
-
-```bash
-oci iam region-subscription list --output table
-```
-
-A successful response should list your OCI region.
-
-For unattended execution, use an API private key without an interactive passphrase.
-
----
-
-# 3. Create the SSH key for the future VM
-
-This is different from the OCI API signing key.
-
-Create a dedicated SSH key:
+Create it with:
 
 ```bash
 mkdir -p ~/.ssh
@@ -302,16 +288,16 @@ You should now have:
 ~/.ssh/oracle_a1.pub
 ```
 
-Protect the private key:
+Set permissions:
 
 ```bash
 chmod 600 ~/.ssh/oracle_a1
 chmod 644 ~/.ssh/oracle_a1.pub
 ```
 
-The public key will be injected into the newly created OCI instance.
+The public key is injected into the OCI instance.
 
-The private key will later be used to connect:
+The private key is used later to connect:
 
 ```bash
 ssh -i ~/.ssh/oracle_a1 opc@PUBLIC_IP
@@ -319,13 +305,11 @@ ssh -i ~/.ssh/oracle_a1 opc@PUBLIC_IP
 
 ---
 
-# 4. Install the catcher
-
-Clone the repository:
+# 8. Clone the project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/oracle-a1-catcher.git
-cd oracle-a1-catcher
+git clone https://github.com/alfawalidou/oracle-a1-free-tier-catcher.git
+cd oracle-a1-free-tier-catcher
 ```
 
 Create your local configuration:
@@ -340,130 +324,93 @@ Edit it:
 nano .env
 ```
 
-Fill in:
+Fill in your own values:
 
 ```bash
-OCI_COMPARTMENT_ID="..."
-OCI_SUBNET_ID="..."
-OCI_IMAGE_ID="..."
+OCI_COMPARTMENT_ID="YOUR_COMPARTMENT_OCID"
+OCI_SUBNET_ID="YOUR_SUBNET_OCID"
+OCI_IMAGE_ID="YOUR_IMAGE_OCID"
 
-OCI_AD_1="..."
-OCI_AD_2="..."
+OCI_AD_1="YOUR_PREFIX:YOUR_REGION-AD-1"
+OCI_AD_2="YOUR_PREFIX:YOUR_REGION-AD-2"
 ```
 
 Never commit `.env`.
 
-Test the Bash syntax:
+---
+
+# 9. Test the script
+
+Check Bash syntax:
 
 ```bash
-bash -n create-a1.example.sh
+bash -n create-a1.sh
 ```
 
-Make the script executable:
+If there is no output, the syntax is valid.
+
+Make it executable:
 
 ```bash
-chmod +x create-a1.example.sh
+chmod +x create-a1.sh
 ```
 
 Run:
 
 ```bash
-./create-a1.example.sh
+./create-a1.sh
 ```
+
+Example output:
+
+```text
+Trying AD-1 with 1 OCPU / 6 GB
+No capacity available.
+
+Trying AD-2 with 1 OCPU / 6 GB
+No capacity available.
+
+Trying AD-1 with 2 OCPU / 12 GB
+No capacity available.
+```
+
+The script keeps retrying until OCI accepts one request.
 
 ---
 
-# 5. Windows
+# 10. Run continuously with systemd
 
-OCI CLI is also available for Windows.
-
-Oracle provides both an MSI installer and a PowerShell installation method.
-
-After installing OCI CLI, verify:
-
-```powershell
-oci --version
-```
-
-The OCI configuration directory is normally:
+A systemd example is included:
 
 ```text
-%USERPROFILE%\.oci
+systemd/oracle-a1-catcher.service.example
 ```
 
-and the configuration file is:
-
-```text
-%USERPROFILE%\.oci\config
-```
-
-The Bash catcher itself is designed primarily for Linux.
-
-Windows users have three recommended options:
-
-### WSL2
-
-Install WSL2 with Ubuntu or Debian and follow the Linux instructions.
-
-This is the recommended Windows method.
-
-### Git Bash
-
-The script may also work from Git Bash if all required Unix tools are available, but WSL2 provides a more predictable environment.
-
-### Native PowerShell
-
-A native PowerShell implementation can be created separately, but this repository currently focuses on Bash.
-
----
-
-# 6. Run continuously with systemd
-
-On Linux, the recommended method is a systemd service.
-
-Example:
-
-```ini
-[Unit]
-Description=Oracle Cloud A1 Catcher
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=YOUR_LINUX_USER
-WorkingDirectory=/home/YOUR_LINUX_USER/oracle-a1-catcher
-ExecStart=/home/YOUR_LINUX_USER/oracle-a1-catcher/create-a1.example.sh
-
-Restart=on-failure
-RestartSec=60
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Install it:
+Copy it:
 
 ```bash
 sudo cp systemd/oracle-a1-catcher.service.example \
   /etc/systemd/system/oracle-a1-catcher.service
 ```
 
-Edit the Linux username and path:
+Edit:
 
 ```bash
 sudo nano /etc/systemd/system/oracle-a1-catcher.service
 ```
 
-Reload systemd:
+Replace:
+
+```text
+YOUR_LINUX_USER
+```
+
+with your Linux username and update the repository path.
+
+Then run:
 
 ```bash
 sudo systemctl daemon-reload
-```
-
-Enable and start:
-
-```bash
 sudo systemctl enable --now oracle-a1-catcher.service
 ```
 
@@ -479,22 +426,22 @@ View logs:
 sudo journalctl -u oracle-a1-catcher.service -f
 ```
 
-The computer must remain powered on and connected to the Internet.
+The machine must remain powered on and connected to the Internet.
 
 ---
 
-# 7. Telegram notifications
+# 11. Telegram notifications
 
 Telegram notifications are optional.
 
 They can notify you when:
 
-* the catcher starts,
-* it is still running after several hours,
-* an unrecoverable error occurs,
-* the OCI instance is successfully created.
+* the catcher starts
+* it is still running after several hours
+* a fatal error occurs
+* the VM is successfully created
 
-## 7.1 Create a Telegram bot
+## 11.1 Create a bot
 
 Open Telegram and contact:
 
@@ -510,27 +457,29 @@ Send:
 
 Follow the instructions.
 
-BotFather will provide a token similar to:
+BotFather gives you a token similar to:
 
 ```text
 123456789:AAxxxxxxxxxxxxxxxxxxxx
 ```
 
-Treat this token like a password.
+Keep this token secret.
 
-Never commit it to GitHub.
+## 11.2 Start your bot
 
-## 7.2 Start the bot
-
-Open your new bot and send:
+Open the bot and send:
 
 ```text
 /start
 ```
 
-Then send any test message.
+Then send any message such as:
 
-## 7.3 Find your Chat ID
+```text
+test
+```
+
+## 11.3 Find your Chat ID
 
 Run:
 
@@ -543,31 +492,96 @@ Look for:
 
 ```json
 "chat": {
-    "id": 123456789
+  "id": 123456789
 }
 ```
 
 The number is your Telegram Chat ID.
 
-## 7.4 Test notifications
+## 11.4 Test the bot
 
 ```bash
 curl -X POST \
   "https://api.telegram.org/botYOUR_TOKEN/sendMessage" \
   --data-urlencode "chat_id=YOUR_CHAT_ID" \
-  --data-urlencode "text=Oracle A1 Catcher notification test"
+  --data-urlencode "text=Oracle A1 Catcher test"
 ```
 
-If the message appears in Telegram, notifications are ready.
-
-Add the values to your local `.env`:
+If the message arrives, add both values to `.env`:
 
 ```bash
 TELEGRAM_BOT_TOKEN="YOUR_SECRET_TOKEN"
 TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
 ```
 
-Again: `.env` must never be committed.
+---
+
+# 12. Logs
+
+The script writes logs to:
+
+```text
+~/create-a1.log
+```
+
+Watch them live:
+
+```bash
+tail -f ~/create-a1.log
+```
+
+---
+
+# 13. Troubleshooting
+
+## Out of capacity
+
+Example:
+
+```text
+Out of capacity for shape VM.Standard.A1.Flex
+```
+
+This is the expected condition.
+
+The script waits and retries.
+
+## NotAuthenticated
+
+Example:
+
+```text
+401 NotAuthenticated
+```
+
+Check:
+
+* User OCID
+* Tenancy OCID
+* API key fingerprint
+* private key path
+* OCI API key registration
+
+## Request timeout
+
+Example:
+
+```text
+The connection to endpoint timed out
+```
+
+The script treats this as a temporary network error and retries automatically.
+
+## NotAuthorizedOrNotFound
+
+This can indicate:
+
+* wrong Availability Domain
+* unavailable resource in that AD
+* wrong subnet/image OCID
+* missing permission
+
+Remove any Availability Domain that consistently returns this error.
 
 ---
 
@@ -576,58 +590,20 @@ Again: `.env` must never be committed.
 Never commit:
 
 ```text
+.env
 OCI private API keys
 SSH private keys
 Telegram bot tokens
-.env
 ~/.oci/config
 ```
 
-The repository `.gitignore` is intended to prevent accidental commits, but always verify before pushing:
+Always check before pushing:
 
 ```bash
 git status
 ```
 
-If a secret is accidentally committed, do not only delete the file. Revoke and regenerate the compromised credential.
-
----
-
-# Logs
-
-The catcher writes a log by default to:
-
-```text
-~/create-a1.log
-```
-
-Watch it live:
-
-```bash
-tail -f ~/create-a1.log
-```
-
----
-
-# Stopping the catcher
-
-Interactive execution:
-
-```text
-Ctrl+C
-```
-
-systemd:
-
-```bash
-sudo systemctl stop oracle-a1-catcher.service
-```
-
-Disable automatic startup:
-
-```bash
-sudo systemctl disable --now oracle-a1-catcher.service
-```
+If a secret is accidentally committed, revoke and regenerate it.
 
 ---
 
@@ -635,8 +611,6 @@ sudo systemctl disable --now oracle-a1-catcher.service
 
 This script does not guarantee that Oracle Cloud capacity will become available.
 
-Capacity depends entirely on Oracle Cloud infrastructure in the selected region and Availability Domain.
+Capacity depends entirely on Oracle Cloud infrastructure in the selected region.
 
-The script only automates repeated OCI API requests that could otherwise be performed manually from the Oracle Cloud Console.
-
-Use sensible retry intervals and comply with Oracle Cloud terms, quotas and API limits.
+Use reasonable retry intervals and respect Oracle Cloud quotas, rate limits and terms of service.
