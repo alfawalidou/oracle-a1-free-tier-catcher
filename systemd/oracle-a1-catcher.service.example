@@ -1,0 +1,21 @@
+[Unit]
+Description=Oracle Cloud A1 Free Tier Catcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# CHANGE THIS
+User=YOUR_LINUX_USER
+
+# CHANGE THIS
+WorkingDirectory=/home/YOUR_LINUX_USER/oracle-a1-free-tier-catcher
+
+ExecStart=/home/YOUR_LINUX_USER/oracle-a1-free-tier-catcher/create-a1.sh
+
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
