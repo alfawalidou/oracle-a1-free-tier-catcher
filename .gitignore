@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# OCI credentials
+.oci/
+*.pem
+*.key
+
+# SSH private keys
+id_rsa
+id_ed25519
+oracle_a1
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
