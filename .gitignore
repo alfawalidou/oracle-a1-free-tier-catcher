@@ -1,15 +1,15 @@
-# Secrets
+# Local configuration
 .env
 
-# OCI credentials
+# OCI
 .oci/
 *.pem
 *.key
 
-# SSH private keys
+# SSH keys
+oracle_a1
 id_rsa
 id_ed25519
-oracle_a1
 
 # Logs
 *.log
@@ -18,8 +18,18 @@ oracle_a1
 *.tmp
 *.swp
 
-# OS/editor
-.DS_Store
-Thumbs.db
+# Python
+__pycache__/
+*.pyc
+
+# VSCode
 .vscode/
+
+# JetBrains
 .idea/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
